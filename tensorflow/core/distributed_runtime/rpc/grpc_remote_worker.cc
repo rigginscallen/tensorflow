@@ -40,6 +40,7 @@ class GrpcRemoteWorker : public WorkerInterface {
       : channel_(channel),
         cq_(completion_queue),
         getstatus_(Method(GrpcWorkerMethod::kGetStatus)),
+        createworkersession_(Method(GrpcWorkerMethod::kCreateWorkerSession)),
         registergraph_(Method(GrpcWorkerMethod::kRegisterGraph)),
         deregistergraph_(Method(GrpcWorkerMethod::kDeregisterGraph)),
         rungraph_(Method(GrpcWorkerMethod::kRunGraph)),
@@ -56,6 +57,12 @@ class GrpcRemoteWorker : public WorkerInterface {
                       GetStatusResponse* response,
                       StatusCallback done) override {
     IssueRequest(request, response, getstatus_, std::move(done));
+  }
+
+  void CreateWorkerSessionAsync(const CreateWorkerSessionRequest* request,
+                                CreateWorkerSessionResponse* response,
+                                StatusCallback done) override {
+    IssueRequest(request, response, createworkersession_, std::move(done));
   }
 
   void RegisterGraphAsync(const RegisterGraphRequest* request,
@@ -75,9 +82,10 @@ class GrpcRemoteWorker : public WorkerInterface {
     IssueRequest(request, response, rungraph_, std::move(done), call_opts);
   }
   void RunGraphAsync(CallOptions* call_opts, RunGraphRequestWrapper* request,
-                     RunGraphResponse* response, StatusCallback done) override {
-    IssueRequest(&request->ToProto(), response, rungraph_, std::move(done),
-                 call_opts);
+                     MutableRunGraphResponseWrapper* response,
+                     StatusCallback done) override {
+    IssueRequest(&request->ToProto(), get_proto_from_wrapper(response),
+                 rungraph_, std::move(done), call_opts);
   }
 
   void CleanupGraphAsync(const CleanupGraphRequest* request,
@@ -137,8 +145,9 @@ class GrpcRemoteWorker : public WorkerInterface {
             // the RecvTensor response can not have been sent before
             // the RecvTensor request, and must have been sent before
             // it was received.
-            send_start_usec = std::max(start_usec, static_cast<int64>(
-                response->metadata().send_start_micros()));
+            send_start_usec = std::max(
+                start_usec,
+                static_cast<int64>(response->metadata().send_start_micros()));
             send_start_usec = std::min(send_start_usec, end_usec - 1);
           }
           const string& key = request->rendezvous_key();
@@ -244,6 +253,7 @@ class GrpcRemoteWorker : public WorkerInterface {
   ::grpc::CompletionQueue* cq_;
 
   const ::grpc::RpcMethod getstatus_;
+  const ::grpc::RpcMethod createworkersession_;
   const ::grpc::RpcMethod registergraph_;
   const ::grpc::RpcMethod deregistergraph_;
   const ::grpc::RpcMethod rungraph_;

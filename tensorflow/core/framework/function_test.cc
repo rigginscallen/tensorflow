@@ -48,52 +48,8 @@ y: A scalar in type T.
 
 static InstantiateAttrValueMap kNoAttrs;
 
-TEST(TFunc, SquarePlusOneOld) {
-  auto fdef = FDH::Define(  // Create a FunctionDef using Function::Nodes.
-      // Name
-      "SquarePlusOne",
-      // Args
-      {"x: T"},
-      // Return values
-      {"y: T"},
-      // Attrs
-      {"T: {float, double, int32, int64}"},
-      // Nodes
-      {// a = Square<T>(x)
-       {{"a"}, "Square", {"x"}, {{"T", "$T"}}},
-       // o = One<T>()
-       // NOTE: We can also have a Cast<Tin, Tout>(x) instead.
-       {{"o"}, "One", {}, {{"T", "$T"}}},
-       // y = Add<T>(a, o)
-       {{"y"}, "Add", {"a", "o"}, {{"T", "$T"}}}});
-
-  const char* e = R"P(
-SquarePlusOne[T:{float, double, int32, int64}](x:T) -> (y:T) {
-  a = Square[T=$T](x)
-  o = One[T=$T]()
-  y = Add[T=$T](a:y:0, o:y:0)
-  return y = y:z:0
-}
-)P";
-  EXPECT_EQ(DebugString(fdef), e);
-
-  // Instantiate one with T=float
-  InstantiationResult result;
-  TF_ASSERT_OK(InstantiateFunction(fdef, {{"T", DT_FLOAT}}, GetOpSig, &result));
-  const char* e2 = R"P(
-(n0:float) -> (n3:float) {
-  n1 = Square[T=float](n0)
-  n2 = One[T=float]()
-  n3 = Add[T=float](n1, n2)
-}
-)P";
-  EXPECT_EQ(result.arg_types, DataTypeVector({DT_FLOAT}));
-  EXPECT_EQ(result.ret_types, DataTypeVector({DT_FLOAT}));
-  EXPECT_EQ(DebugString(result.gdef), e2);
-}
-
-TEST(TFunc, SquarePlusOneNodeDef) {
-  auto fdef = FDH::Create(  // Create a FunctionDef using NodeDefs.
+TEST(TFunc, SquarePlusOne) {
+  auto fdef = FDH::Create(
       // Name
       "SquarePlusOne",
       // Inputs
@@ -127,10 +83,10 @@ SquarePlusOne[T:{float, double, int32, int64}](x:T) -> (y:T) {
   InstantiationResult result;
   TF_ASSERT_OK(InstantiateFunction(fdef, {{"T", DT_FLOAT}}, GetOpSig, &result));
   const char* e2 = R"P(
-(n0:float) -> (n3:float) {
-  n1 = Square[T=float](n0)
-  n2 = One[T=float]()
-  n3 = Add[T=float](n1, n2)
+(x:float) -> (y:float) {
+  a = Square[T=float](x)
+  o = One[T=float]()
+  y = Add[T=float](a, o)
 }
 )P";
   EXPECT_EQ(result.arg_types, DataTypeVector({DT_FLOAT}));
@@ -138,8 +94,8 @@ SquarePlusOne[T:{float, double, int32, int64}](x:T) -> (y:T) {
   EXPECT_EQ(DebugString(result.gdef), e2);
 }
 
-TEST(TFunc, ControlDepNodeDef) {
-  auto fdef = FDH::Create(  // Create a FunctionDef using NodeDefs.
+TEST(TFunc, ControlDep) {
+  auto fdef = FDH::Create(
       // Name
       "ControlDep",
       // Inputs
@@ -172,10 +128,10 @@ ControlDep(x:int32) -> (y:int32) {
   InstantiationResult result;
   TF_ASSERT_OK(InstantiateFunction(fdef, {{"T", DT_FLOAT}}, GetOpSig, &result));
   const char* e2 = R"P(
-(n0:int32) -> (n3:int32) {
-  n1 = Identity[T=int32](n0)
-  n2 = NoOp() @ n1
-  n3 = Identity[T=int32](n1) @ n2
+(x:int32) -> (y:int32) {
+  a = Identity[T=int32](x)
+  o = NoOp() @ a
+  y = Identity[T=int32](a) @ o
 }
 )P";
   EXPECT_EQ(result.arg_types, DataTypeVector({DT_INT32}));
@@ -190,44 +146,8 @@ REGISTER_OP("HasDefaultType")
 // This verifies that a function using an op before a type attr (with
 // a default) is added, still works.  This is important for backwards
 // compatibilty.
-TEST(TFunc, MissingTypeAttrOld) {
-  auto fdef = FDH::Define(  // Create a FunctionDef using Function::Nodes.
-      // Name
-      "BackCompat",
-      // Args
-      {},
-      // Return values
-      {"y: float"},
-      // Attrs
-      {},
-      // Nodes
-      {// y = HasDefaultType(x), T missing, defaults to float
-       {{"y"}, "HasDefaultType", {}, {}}});
-
-  const char* e = R"P(
-BackCompat() -> (y:float) {
-  y = HasDefaultType()
-  return y = y:out:0
-}
-)P";
-  EXPECT_EQ(DebugString(fdef), e);
-
-  InstantiationResult result;
-  TF_ASSERT_OK(
-      InstantiateFunction(fdef, InstantiateAttrValueMap{}, GetOpSig, &result));
-  // Should get T=float from Op's default.
-  const char* e2 = R"P(
-() -> (n0:float) {
-  n0 = HasDefaultType[T=float]()
-}
-)P";
-  EXPECT_EQ(result.arg_types, DataTypeVector());
-  EXPECT_EQ(result.ret_types, DataTypeVector({DT_FLOAT}));
-  EXPECT_EQ(DebugString(result.gdef), e2);
-}
-
-TEST(TFunc, MissingTypeAttrNodeDef) {
-  auto fdef = FDH::Create(  // Create a FunctionDef using NodeDefs.
+TEST(TFunc, MissingTypeAttr) {
+  auto fdef = FDH::Create(
       // Name
       "BackCompat",
       // Args
@@ -255,8 +175,8 @@ BackCompat() -> (y:float) {
       InstantiateFunction(fdef, InstantiateAttrValueMap{}, GetOpSig, &result));
   // Should get T=float from Op's default.
   const char* e2 = R"P(
-() -> (n0:float) {
-  n0 = HasDefaultType[T=float]()
+() -> (a:float) {
+  a = HasDefaultType[T=float]()
 }
 )P";
   EXPECT_EQ(result.arg_types, DataTypeVector());
@@ -264,11 +184,8 @@ BackCompat() -> (y:float) {
   EXPECT_EQ(DebugString(result.gdef), e2);
 }
 
-TEST(TFunc, NTimesTNodeDef) {
-  // Note that the equivalent FunctionDef using FunctionDef::Node requires
-  // using a _ListToArray to package up the two inputs to AddN as a single
-  // N*T edge.
-  auto fdef = FDH::Create(  // Create a FunctionDef using NodeDefs.
+TEST(TFunc, NTimesT) {
+  auto fdef = FDH::Create(
       // Name
       "NTimesT",
       // Inputs
@@ -294,8 +211,8 @@ NTimesT(x:float, y:float) -> (z:float) {
   InstantiationResult result;
   TF_ASSERT_OK(InstantiateFunction(fdef, kNoAttrs, GetOpSig, &result));
   const char* e2 = R"P(
-(n0:float, n1:float) -> (n2:float) {
-  n2 = AddN[N=2, T=float](n0, n1)
+(x:float, y:float) -> (a:float) {
+  a = AddN[N=2, T=float](x, y)
 }
 )P";
   EXPECT_EQ(result.arg_types, DataTypeVector({DT_FLOAT, DT_FLOAT}));
@@ -358,9 +275,9 @@ AddSquared[N:int, T:{float, double, int32, int64}](x:N*T) -> (y:T) {
   TF_ASSERT_OK(InstantiateFunction(fdef, {{"N", 3}, {"T", DT_FLOAT}}, GetOpSig,
                                    &result));
   const char* e2 = R"P(
-(n0:float, n1:float, n2:float) -> (n4:float) {
-  n3 = Map[N=3, T=float, U=float, func=Square[T=float]](n0, n1, n2)
-  n4 = AddN[N=3, T=float](n3, n3:1, n3:2)
+(x_0:float, x_1:float, x_2:float) -> (y:float) {
+  a = Map[N=3, T=float, U=float, func=Square[T=float]](x_0, x_1, x_2)
+  y = AddN[N=3, T=float](a, a:1, a:2)
 }
 )P";
   EXPECT_EQ(result.arg_types, DataTypeVector({DT_FLOAT, DT_FLOAT, DT_FLOAT}));
@@ -400,12 +317,12 @@ ControlDeps(x:float) -> () {
   InstantiationResult result;
   TF_ASSERT_OK(InstantiateFunction(fdef, kNoAttrs, GetOpSig, &result));
   const char* e2 = R"P(
-(n0:float) -> () {
-  n1 = One[T=float]() @ n0
-  n2 = NoOp() @ n1
-  n3 = One[T=float]() @ n2
-  n4 = NoOp() @ n3
-  n5 = One[T=float]() @ n1, n4
+(x:float) -> () {
+  a = One[T=float]() @ x
+  u = NoOp() @ a
+  b = One[T=float]() @ u
+  v = NoOp() @ b
+  c = One[T=float]() @ a, v
 }
 )P";
   EXPECT_EQ(result.arg_types, DataTypeVector({DT_FLOAT}));
@@ -480,13 +397,13 @@ Test(i:float) -> (o:float) {
   InstantiationResult result;
   TF_ASSERT_OK(InstantiateFunction(fdef, kNoAttrs, GetOpSig, &result));
   const char* e2 = R"P(
-(n0:float) -> (n6:float) {
-  n1 = Const[dtype=int32, value=Tensor<type: int32 shape: [] values: 0>]()
-  n2 = Split[T=float, num_split=4](n1, n0)
-  n3 = Mul[T=float](n2, n2:1)
-  n4 = Mul[T=float](n2:2, n2:3)
-  n5 = _ListToArray[N=2, T=float, Tin={float, float}](n3, n4)
-  n6 = AddN[N=2, T=float](n5, n5:1)
+(i:float) -> (o:float) {
+  zero = Const[dtype=int32, value=Tensor<type: int32 shape: [] values: 0>]()
+  s = Split[T=float, num_split=4](zero, i)
+  l = Mul[T=float](s, s:1)
+  r = Mul[T=float](s:2, s:3)
+  x = _ListToArray[N=2, T=float, Tin={float, float}](l, r)
+  o = AddN[N=2, T=float](x, x:1)
 }
 )P";
   EXPECT_EQ(result.arg_types, DataTypeVector({DT_FLOAT}));
@@ -552,9 +469,9 @@ MySelect(x:float) -> (z:float) {
   InstantiationResult result;
   TF_ASSERT_OK(InstantiateFunction(fdef, kNoAttrs, GetOpSig, &result));
   const char* e2 = R"P(
-(n0:float) -> (n2:float) {
-  n1 = Cond[Tin={float}, cond=MyCond, else_branch=MyElse, out_types={float}, then_branch=MyThen](n0)
-  n2 = Cond[Tin={float, float}, cond=MyCond2, else_branch=MyElse2, out_types={float}, then_branch=MyThen2](n1, n1)
+(x:float) -> (z:float) {
+  y = Cond[Tin={float}, cond=MyCond, else_branch=MyElse, out_types={float}, then_branch=MyThen](x)
+  z = Cond[Tin={float, float}, cond=MyCond2, else_branch=MyElse2, out_types={float}, then_branch=MyThen2](y, y)
 }
 )P";
   EXPECT_EQ(result.arg_types, DataTypeVector({DT_FLOAT}));
@@ -790,8 +707,8 @@ TEST(InstantiateErrors, TypeList_Missing_Arg) {
            "input unknown is not found");
 }
 
-TEST(InstantiateErrors, NodeDef_TooManyInputs) {
-  auto fdef = FDH::Create(  // Create a FunctionDef using NodeDefs.
+TEST(InstantiateErrors, TooManyInputs) {
+  auto fdef = FDH::Create(
       // Name
       "TooManyInputs",
       // Inputs
@@ -811,8 +728,8 @@ TEST(InstantiateErrors, NodeDef_TooManyInputs) {
            "Expected input[2] == 'x' to be a control input.");
 }
 
-TEST(InstantiateErrors, NodeDef_TooFewInputs) {
-  auto fdef = FDH::Create(  // Create a FunctionDef using NodeDefs.
+TEST(InstantiateErrors, TooFewInputs) {
+  auto fdef = FDH::Create(
       // Name
       "TooFewInputs",
       // Inputs
@@ -832,8 +749,8 @@ TEST(InstantiateErrors, NodeDef_TooFewInputs) {
            "Attempt to access beyond input size: 2 >= 2");
 }
 
-TEST(InstantiateErrors, NodeDef_TooManyInputsFromArray1) {
-  auto fdef = FDH::Create(  // Create a FunctionDef using NodeDefs.
+TEST(InstantiateErrors, TooManyInputsFromArray1) {
+  auto fdef = FDH::Create(
       // Name
       "TooManyInputsFromArray",
       // Inputs
@@ -860,8 +777,8 @@ TEST(InstantiateErrors, NodeDef_TooManyInputsFromArray1) {
            "Expected input[1] == 'y' to be a control input.");
 }
 
-TEST(InstantiateErrors, NodeDef_TooManyInputsFromArray2) {
-  auto fdef = FDH::Create(  // Create a FunctionDef using NodeDefs.
+TEST(InstantiateErrors, TooManyInputsFromArray2) {
+  auto fdef = FDH::Create(
       // Name
       "TooManyInputsFromArray",
       // Inputs
@@ -888,8 +805,8 @@ TEST(InstantiateErrors, NodeDef_TooManyInputsFromArray2) {
            "Input a:output too long for inputs");
 }
 
-TEST(InstantiateErrors, NodeDef_TypeMismatch) {
-  auto fdef = FDH::Create(  // Create a FunctionDef using NodeDefs.
+TEST(InstantiateErrors, TypeMismatch) {
+  auto fdef = FDH::Create(
       // Name
       "TypeMismatch",
       // Inputs
@@ -1029,6 +946,62 @@ TEST(FunctionLibraryDefinitionTest, AddFunctionDef) {
             test::function::WXPlusB().signature().DebugString());
 }
 
+TEST(FunctionLibraryDefinitionTest, AddGradientDef) {
+  // AddGradientDef() doesn't check that functions referenced exist (yet?)
+  FunctionLibraryDefinition lib_def(OpRegistry::Global(), FunctionDefLibrary());
+
+  // Test adding a gradient (XTimesFour isn't a valid grad function for
+  // XTimesTwo but that's ok for now)
+  GradientDef grad;
+  grad.set_function_name(test::function::XTimesTwo().signature().name());
+  grad.set_gradient_func(test::function::XTimesFour().signature().name());
+  TF_EXPECT_OK(lib_def.AddGradientDef(grad));
+
+  // Test that adding a duplicate gradient fails
+  grad.set_gradient_func(test::function::XTimes16().signature().name());
+  Status s = lib_def.AddGradientDef(grad);
+  EXPECT_EQ(s.code(), error::Code::INVALID_ARGUMENT);
+  EXPECT_EQ(s.error_message(),
+            "Gradient for function 'XTimesTwo' already exists.");
+}
+
+TEST(FunctionLibraryDefinitionTest, AddLibrary) {
+  // Create lib def with single function
+  FunctionDefLibrary proto;
+  *proto.add_function() = test::function::XTimesTwo();
+  FunctionLibraryDefinition lib_def(OpRegistry::Global(), proto);
+
+  // Error if you try to add the same function twice
+  Status s = lib_def.AddLibrary(lib_def);
+  EXPECT_EQ(s.code(), error::Code::INVALID_ARGUMENT);
+  EXPECT_EQ(s.error_message(),
+            "Function with name: XTimesTwo already exists in function "
+            "library.");
+
+  // Add gradient
+  GradientDef grad;
+  grad.set_function_name(test::function::XTimesTwo().signature().name());
+  grad.set_gradient_func(test::function::XTimesFour().signature().name());
+  TF_EXPECT_OK(lib_def.AddGradientDef(grad));
+
+  // Error if you try to add the same library function twice
+  proto.Clear();
+  *proto.add_gradient() = grad;
+  FunctionLibraryDefinition lib_def2(OpRegistry::Global(), proto);
+  s = lib_def.AddLibrary(lib_def2);
+  EXPECT_EQ(s.code(), error::Code::INVALID_ARGUMENT);
+  EXPECT_EQ(s.error_message(),
+            "Gradient for function 'XTimesTwo' already exists.");
+
+  // No conflicing functions or gradients OK
+  proto.Clear();
+  *proto.add_function() = test::function::XTimesFour();
+  grad.set_function_name(test::function::XTimes16().signature().name());
+  *proto.add_gradient() = grad;
+  FunctionLibraryDefinition lib_def3(OpRegistry::Global(), proto);
+  TF_EXPECT_OK(lib_def.AddLibrary(lib_def3));
+};
+
 TEST(FunctionLibraryDefinitionTest, ToProto) {
   FunctionDefLibrary proto1;
   *proto1.add_function() = test::function::XTimesTwo();
@@ -1132,6 +1105,38 @@ TEST(FunctionLibraryDefinitionTest, GetAttr_Gradient) {
   AddNodeAttr(FunctionLibraryDefinition::kFuncAttr, nal, &ndef);
   TF_EXPECT_OK(lib.GetAttr(ndef, "annotation", &annotation));
   EXPECT_EQ(annotation, false);  // WXPlusB has no custom gradient.
+}
+
+// TODO(skyewm): this could be more thorough
+TEST(FunctionDefsEqualTest, TestFunctionDefsEqual) {
+  // Equal functions
+  FunctionDef fdef1 = test::function::XTimesTwo();
+  FunctionDef fdef2 = test::function::XTimesTwo();
+  EXPECT_TRUE(FunctionDefsEqual(fdef1, fdef2));
+
+  // Different functions
+  fdef2 = test::function::XTimesFour();
+  EXPECT_FALSE(FunctionDefsEqual(fdef1, fdef2));
+
+  // Different signatures
+  fdef2 = test::function::XTimesTwo();
+  fdef2.mutable_signature()->mutable_input_arg(0)->set_name("foo");
+  EXPECT_FALSE(FunctionDefsEqual(fdef1, fdef2));
+
+  // Descriptions must be equal
+  fdef2 = test::function::XTimesTwo();
+  fdef2.mutable_signature()->mutable_input_arg(0)->set_description("foo");
+  EXPECT_FALSE(FunctionDefsEqual(fdef1, fdef2));
+
+  // Different NodeDefs
+  fdef2 = test::function::XTimesTwo();
+  *fdef2.add_node_def() = fdef2.node_def(0);
+  EXPECT_FALSE(FunctionDefsEqual(fdef1, fdef2));
+
+  // Different return values
+  fdef2 = test::function::XTimesTwo();
+  (*fdef2.mutable_ret())["y"] = "y:z:1";  // originally is "y:z:0"
+  EXPECT_FALSE(FunctionDefsEqual(fdef1, fdef2));
 }
 
 }  // end namespace tensorflow

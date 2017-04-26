@@ -51,8 +51,9 @@ Status GrpcSession::Create(const SessionOptions& options,
     master = LocalMaster::Lookup(options.target);
   }
   if (!master) {
-    SharedGrpcChannelPtr master_channel =
-        NewHostPortGrpcChannel(options.target.substr(kSchemePrefixLength));
+    SharedGrpcChannelPtr master_channel;
+    TF_RETURN_IF_ERROR(NewHostPortGrpcChannel(
+        options.target.substr(kSchemePrefixLength), &master_channel));
     master.reset(NewGrpcMaster(master_channel));
   }
   ret->SetRemoteMaster(std::move(master));
@@ -171,9 +172,15 @@ Status GrpcSession::RunHelper(
   // Convert to proto
   std::unique_ptr<MutableRunStepRequestWrapper> req(
       master_->CreateRunStepRequest());
-  RunStepResponse resp;
+  std::unique_ptr<MutableRunStepResponseWrapper> resp(
+      master_->CreateRunStepResponse());
 
   *req->mutable_options() = run_options;
+
+  if (run_options.timeout_in_ms() == 0) {
+    req->mutable_options()->set_timeout_in_ms(
+        options_.config.operation_timeout_in_ms());
+  }
 
   if (!prun_handle.empty()) {
     req->set_partial_run_handle(prun_handle);
@@ -195,32 +202,28 @@ Status GrpcSession::RunHelper(
   }
 
   CallOptions call_options;
-  call_options.SetTimeout(run_options.timeout_in_ms());
-  TF_RETURN_IF_ERROR(RunProto(&call_options, req.get(), &resp));
+  call_options.SetTimeout(req->options().timeout_in_ms());
+  TF_RETURN_IF_ERROR(RunProto(&call_options, req.get(), resp.get()));
 
   if (!output_tensor_names.empty()) {
     outputs->resize(output_tensor_names.size());
   }
 
   // Convert response back to Tensors in the correct order.
-  for (const NamedTensorProto& tensor : resp.tensor()) {
-    auto fetch_it = output_name_to_offset.find(tensor.name());
+  for (size_t i = 0; i < resp->num_tensors(); ++i) {
+    auto fetch_it = output_name_to_offset.find(resp->tensor_name(i));
     if (fetch_it == output_name_to_offset.end()) {
       return errors::Internal("Received response for unrequested fetch: ",
-                              tensor.name());
+                              resp->tensor_name(i));
     }
 
     Tensor output;
-    if (!output.FromProto(tensor.tensor())) {
-      return errors::InvalidArgument("Could not parse returned proto for ",
-                                     tensor.name());
-    }
-
+    TF_RETURN_IF_ERROR(resp->TensorValue(i, &output));
     (*outputs)[fetch_it->second] = output;
   }
 
   if (run_metadata) {
-    run_metadata->Swap(resp.mutable_metadata());
+    run_metadata->Swap(resp->mutable_metadata());
   }
 
   return Status::OK();
@@ -248,7 +251,7 @@ Status GrpcSession::Run(const std::vector<std::pair<string, Tensor>>& inputs,
 
 Status GrpcSession::RunProto(CallOptions* call_options,
                              MutableRunStepRequestWrapper* req,
-                             RunStepResponse* resp) {
+                             MutableRunStepResponseWrapper* resp) {
   {
     mutex_lock l(mu_);
     if (handle_.empty()) {
@@ -347,8 +350,9 @@ void GrpcSession::SetRemoteMaster(std::unique_ptr<MasterInterface> master) {
 // Static method.
 Status GrpcSession::Reset(const SessionOptions& options,
                           const std::vector<string>& containers) {
-  SharedGrpcChannelPtr master_channel =
-      NewHostPortGrpcChannel(options.target.substr(kSchemePrefixLength));
+  SharedGrpcChannelPtr master_channel;
+  TF_RETURN_IF_ERROR(NewHostPortGrpcChannel(
+      options.target.substr(kSchemePrefixLength), &master_channel));
   auto master = NewGrpcMaster(master_channel);
   ResetRequest req;
   for (const auto& c : containers) req.add_container(c);

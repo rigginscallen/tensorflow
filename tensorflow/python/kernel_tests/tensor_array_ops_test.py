@@ -36,6 +36,19 @@ import tensorflow.python.ops.nn_grad  # pylint: disable=unused-import
 from tensorflow.python.platform import test
 
 
+def _make_converter(tf_dtype):
+  def _converter(x):
+    if tf_dtype == dtypes.string:
+      # In Python3, np.str is unicode, while we always want bytes
+      return np.asarray(x).astype("|S")
+    x = np.asarray(x).astype(tf_dtype.as_numpy_dtype)
+    if tf_dtype.is_complex:
+      # Add a non-zero imaginary component to x.
+      x -= 1j * x
+    return x
+  return _converter
+
+
 class TensorArrayTest(test.TestCase):
 
   def testTensorArrayWriteRead(self):
@@ -60,16 +73,11 @@ class TensorArrayTest(test.TestCase):
       self.assertAllEqual(-3.0, d2)
 
   def _testTensorArrayWritePack(self, tf_dtype):
-    dtype = tf_dtype.as_numpy_dtype()
     with self.test_session(use_gpu=True):
       ta = tensor_array_ops.TensorArray(
           dtype=tf_dtype, tensor_array_name="foo", size=3)
 
-      if tf_dtype == dtypes.string:
-        # In Python3, np.str is unicode, while we always want bytes
-        convert = lambda x: np.asarray(x).astype("|S")
-      else:
-        convert = lambda x: np.asarray(x).astype(dtype)
+      convert = _make_converter(tf_dtype)
 
       w0 = ta.write(0, convert([[4.0, 5.0]]))
       w1 = w0.write(1, convert([[6.0, 7.0]]))
@@ -92,17 +100,26 @@ class TensorArrayTest(test.TestCase):
   def testTensorArrayWritePack(self):
     self._testTensorArrayWritePackMaybeLegacy()
 
+  def testEmptyTensorArrayPack(self):
+    with self.test_session(use_gpu=True):
+      ta = tensor_array_ops.TensorArray(
+          dtype=dtypes.float32, tensor_array_name="foo", size=3)
+
+      empty_element = np.zeros((0, 1), dtype=np.float32)
+      w0 = ta.write(0, empty_element)
+      w1 = w0.write(1, empty_element)
+      w2 = w1.write(2, empty_element)
+
+      c0 = w2.stack()
+
+      self.assertAllEqual([3, 0, 1], c0.eval().shape)
+
   def _testTensorArrayWriteConcat(self, tf_dtype):
-    dtype = tf_dtype.as_numpy_dtype()
     with self.test_session(use_gpu=True):
       ta = tensor_array_ops.TensorArray(
           dtype=tf_dtype, tensor_array_name="foo", size=3, infer_shape=False)
 
-      if tf_dtype == dtypes.string:
-        # In Python3, np.str is unicode, while we always want bytes
-        convert = lambda x: np.asarray(x).astype("|S")
-      else:
-        convert = lambda x: np.asarray(x).astype(dtype)
+      convert = _make_converter(tf_dtype)
 
       w0 = ta.write(0, convert([[4.0, 5.0], [104.0, 105.0], [204.0, 205.0]]))
       w1 = w0.write(1, convert([[6.0, 7.0], [106.0, 107.0]]))
@@ -124,7 +141,7 @@ class TensorArrayTest(test.TestCase):
     self._testTensorArrayWriteConcat(dtypes.string)
 
   def _testTensorArrayPackNotAllValuesAvailableFails(self):
-    with self.test_session():
+    with self.test_session(use_gpu=True):
       ta = tensor_array_ops.TensorArray(
           dtype=dtypes.float32, tensor_array_name="foo", size=3)
 
@@ -136,16 +153,11 @@ class TensorArrayTest(test.TestCase):
     self._testTensorArrayPackNotAllValuesAvailableFails()
 
   def _testTensorArrayUnpackRead(self, tf_dtype):
-    dtype = tf_dtype.as_numpy_dtype()
     with self.test_session(use_gpu=True) as session:
       ta = tensor_array_ops.TensorArray(
           dtype=tf_dtype, tensor_array_name="foo", size=3)
 
-      if tf_dtype is dtypes.string:
-        # In Python3, np.str is unicode, while we always want bytes
-        convert = lambda x: np.asarray(x).astype("|S")
-      else:
-        convert = lambda x: np.asarray(x).astype(dtype)
+      convert = _make_converter(tf_dtype)
 
       # Unpack a vector into scalars
       w0 = ta.unstack(convert([1.0, 2.0, 3.0]))
@@ -201,16 +213,11 @@ class TensorArrayTest(test.TestCase):
     self._testTensorArrayUnpackReadMaybeLegacy()
 
   def _testTensorArraySplitRead(self, tf_dtype):
-    dtype = tf_dtype.as_numpy_dtype()
     with self.test_session(use_gpu=True) as session:
       ta = tensor_array_ops.TensorArray(
           dtype=tf_dtype, tensor_array_name="foo", size=3, infer_shape=False)
 
-      if tf_dtype == dtypes.string:
-        # In Python3, np.str is unicode, while we always want bytes
-        convert = lambda x: np.asarray(x).astype("|S")
-      else:
-        convert = lambda x: np.asarray(x).astype(dtype)
+      convert = _make_converter(tf_dtype)
 
       # Split an empty vector
       lengths = constant_op.constant([0, 0, 0])
@@ -831,7 +838,7 @@ class TensorArrayTest(test.TestCase):
         dynamic_size=True, dtype=dtypes.float32)
 
   def testGradSerialTwoLoops(self):
-    with self.test_session():
+    with self.test_session(use_gpu=True):
       num_steps = 100
       acc = tensor_array_ops.TensorArray(
           dtype=dtypes.float32,
@@ -937,7 +944,7 @@ class TensorArrayTest(test.TestCase):
         self._grad_source_for_name("foo/gradients/bar/gradients_0/baz"))
 
   def testWriteShape(self):
-    with self.test_session():
+    with self.test_session(use_gpu=True):
       ta = tensor_array_ops.TensorArray(
           dtype=dtypes.float32, tensor_array_name="foo", size=3)
       c0 = constant_op.constant([4.0, 5.0])
@@ -961,7 +968,7 @@ class TensorArrayTest(test.TestCase):
         w0.write(0, c2)
 
   def testPartlyUnknownShape(self):
-    with self.test_session():
+    with self.test_session(use_gpu=True):
       ta = tensor_array_ops.TensorArray(
           dtype=dtypes.float32, tensor_array_name="foo", size=6)
 
@@ -1001,7 +1008,7 @@ class TensorArrayTest(test.TestCase):
       self.assertAllEqual([5, 4, 2, 3], r5.get_shape().as_list())
 
   def _testUnpackShape(self):
-    with self.test_session():
+    with self.test_session(use_gpu=True):
       ta = tensor_array_ops.TensorArray(
           dtype=dtypes.float32,
           tensor_array_name="foo",
@@ -1027,7 +1034,7 @@ class TensorArrayTest(test.TestCase):
     self._testUnpackShape()
 
   def testSplitShape(self):
-    with self.test_session():
+    with self.test_session(use_gpu=True):
       ta = tensor_array_ops.TensorArray(
           dtype=dtypes.float32,
           tensor_array_name="foo",
@@ -1050,7 +1057,7 @@ class TensorArrayTest(test.TestCase):
       self.assertAllEqual(r0.get_shape(), tensor_shape.unknown_shape())
 
   def testWriteUnknownShape(self):
-    with self.test_session():
+    with self.test_session(use_gpu=True):
       ta = tensor_array_ops.TensorArray(
           dtype=dtypes.float32,
           tensor_array_name="foo",
@@ -1263,6 +1270,52 @@ class TensorArrayTest(test.TestCase):
       # This should use the TensorArray on /gpu:0
       size_value, _ = session.run((size, ta.flow))
       self.assertEqual(2, size_value)
+
+  def testTensorArrayIdentity(self):
+    with self.test_session(use_gpu=True) as session:
+      ta0 = tensor_array_ops.TensorArray(dtype=dtypes.float32, size=2,
+                                         infer_shape=False)
+      ta1 = tensor_array_ops.TensorArray(dtype=dtypes.int32, size=4,
+                                         infer_shape=True)
+
+      ta0 = ta0.write(0, 0.)
+      ta1 = ta1.write(0, 1)
+
+      v0 = variables.Variable(0)
+      v1 = variables.Variable(0)
+
+      with ops.control_dependencies([v0.assign_add(1)]):
+        ta0 = ta0.identity()
+
+      with ops.control_dependencies([v1.assign_add(1)]):
+        ta1 = ta1.identity()
+
+      read0 = ta0.read(0)
+      read1 = ta1.read(0)
+
+      size0 = ta0.size()
+      size1 = ta1.size()
+
+      # Tests correct properties on new TensorArrays.
+      self.assertEqual(dtypes.float32, ta0.dtype)
+      self.assertEqual(dtypes.int32, ta1.dtype)
+      self.assertEqual(tensor_shape.unknown_shape(), read0.get_shape())
+      self.assertEqual(tensor_shape.scalar(), read1.get_shape())
+
+      variables.global_variables_initializer().run()
+
+      read0_v, read1_v, size0_v, size1_v = session.run(
+          (read0, read1, size0, size1))
+
+      # Tests that the control dependencies was added and executed.
+      self.assertEqual(1, v0.eval())
+      self.assertEqual(1, v1.eval())
+
+      # Tests correct TensorArray.
+      self.assertEqual(read0_v, 0)
+      self.assertEqual(read1_v, 1)
+      self.assertEqual(size0_v, 2)
+      self.assertEqual(size1_v, 4)
 
 
 if __name__ == "__main__":

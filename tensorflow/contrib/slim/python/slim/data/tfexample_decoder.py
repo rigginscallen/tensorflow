@@ -137,7 +137,7 @@ class BoundingBox(ItemHandler):
       side = array_ops.expand_dims(keys_to_tensors[key].values, 0)
       sides.append(side)
 
-    bounding_box = array_ops.concat_v2(sides, 0)
+    bounding_box = array_ops.concat(sides, 0)
     return array_ops.transpose(bounding_box)
 
 
@@ -257,7 +257,7 @@ class SparseTensor(ItemHandler):
     ids = math_ops.to_int64(indices.values)
     indices_columns_to_preserve = array_ops.slice(
         indices.indices, [0, 0], array_ops.stack([-1, rank - 1]))
-    new_indices = array_ops.concat_v2(
+    new_indices = array_ops.concat(
         [indices_columns_to_preserve, array_ops.reshape(ids, [-1, 1])], 1)
 
     tensor = sparse_tensor.SparseTensor(new_indices, values.values, shape)
@@ -269,7 +269,12 @@ class SparseTensor(ItemHandler):
 class Image(ItemHandler):
   """An ItemHandler that decodes a parsed Tensor as an image."""
 
-  def __init__(self, image_key=None, format_key=None, shape=None, channels=3):
+  def __init__(self,
+               image_key=None,
+               format_key=None,
+               shape=None,
+               channels=3,
+               dtype=dtypes.uint8):
     """Initializes the image.
 
     Args:
@@ -282,6 +287,11 @@ class Image(ItemHandler):
         accordingly. If left as None, no reshaping is done. A shape should
         be supplied only if all the stored images have the same shape.
       channels: the number of channels in the image.
+      dtype: images will be decoded at this bit depth. Different formats
+        support different bit depths.
+          See tf.image.decode_png,
+              tf.decode_raw,
+              tf.image.decode_jpeg: only supports tf.uint8
     """
     if not image_key:
       image_key = 'image/encoded'
@@ -293,6 +303,7 @@ class Image(ItemHandler):
     self._format_key = format_key
     self._shape = shape
     self._channels = channels
+    self._dtype = dtype
 
   def tensors_to_item(self, keys_to_tensors):
     """See base class."""
@@ -314,12 +325,17 @@ class Image(ItemHandler):
     """
 
     def decode_png():
-      return image_ops.decode_png(image_buffer, self._channels)
+      return image_ops.decode_png(
+          image_buffer, self._channels, dtype=self._dtype)
 
     def decode_raw():
-      return parsing_ops.decode_raw(image_buffer, dtypes.uint8)
+      return parsing_ops.decode_raw(image_buffer, out_type=self._dtype)
 
     def decode_jpg():
+      if self._dtype != dtypes.uint8:
+        raise ValueError(
+            'jpeg decoder can only be used to decode to tf.uint8 but %s was '
+            'requested for a jpeg image.' % self._dtype)
       return image_ops.decode_jpeg(image_buffer, self._channels)
 
     # For RGBA images JPEG is not a valid decoder option.
@@ -385,7 +401,7 @@ class TFExampleDecoder(data_decoder.DataDecoder):
 
   def list_items(self):
     """See base class."""
-    return self._items_to_handlers.keys()
+    return list(self._items_to_handlers.keys())
 
   def decode(self, serialized_example, items=None):
     """Decodes the given serialized TF-example.
